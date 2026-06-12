@@ -1,0 +1,6 @@
+{
+  "name": "AI Coding Assistant",
+  "description": "An interactive AI coding assistant shaped as a fully-featured Android app, integrating Gemini, OpenRouter, Hugging Face, Ollama, local Gemma downloading simulator, and live coding playground.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
