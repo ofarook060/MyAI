@@ -55,26 +55,38 @@ app.post("/api/chat", async (req, res) => {
 
       const modelToUse = model || "gemini-3.5-flash";
 
-      // Call generateContent
-      // Create user messages string or convert messages array
-      // Gemini chats helper can also be used, but generateContent with complete history is highly stable.
-      const response = await activeAi.models.generateContent({
-        model: modelToUse,
-        contents: messages.map(m => ({
-          role: m.role === "assistant" ? "model" : "user",
-          parts: [{ text: m.content }]
-        })),
-        config: {
-          systemInstruction,
-          temperature: settings?.temperature ?? 0.7,
-        }
-      });
+      try {
+        const response = await activeAi.models.generateContent({
+          model: modelToUse,
+          contents: messages.map(m => ({
+            role: m.role === "assistant" ? "model" : "user",
+            parts: [{ text: m.content }]
+          })),
+          config: {
+            systemInstruction,
+            temperature: settings?.temperature ?? 0.7,
+          }
+        });
 
-      return res.json({
-        content: response.text || "No response text received.",
-        model: modelToUse,
-        provider: "gemini",
-      });
+        return res.json({
+          content: response.text || "No response text received.",
+          model: modelToUse,
+          provider: "gemini",
+        });
+      } catch (gemError: any) {
+        console.error("Gemini API calling error:", gemError);
+        const isNetworkError = gemError.message?.includes("fetch failed") || 
+                             gemError.message?.includes("connect") || 
+                             gemError.message?.includes("ENOTFOUND") || 
+                             gemError.message?.includes("timeout");
+        if (isNetworkError) {
+          return res.status(503).json({
+            error: "Gemini Cloud API failed to connect. Your local workspace or sandbox network might have blocked outgoing traffic. Please enable 'Offline Mode' (top right) or use the local 'Gemma 2 2B (Galaxy A34 Optimized)' model which has robust embedded offline intelligence!",
+            code: "NETWORK_UNREACHABLE"
+          });
+        }
+        return res.status(500).json({ error: `Gemini API Error: ${gemError.message || gemError}` });
+      }
     }
 
     // 2. OPENROUTER PROVIDER
@@ -96,30 +108,45 @@ app.post("/api/chat", async (req, res) => {
       };
 
       const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
-      const response = await fetch(openRouterUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${activeKey}`,
-          "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
-          "X-Title": "Droid AI Coding Assistant",
-        },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const response = await fetch(openRouterUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${activeKey}`,
+            "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+            "X-Title": "Droid AI Coding Assistant",
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (!response.ok) {
-        const errDetail = await response.text();
-        return res.status(response.status).json({ error: `OpenRouter Error: ${errDetail}` });
+        if (!response.ok) {
+          const errDetail = await response.text();
+          return res.status(response.status).json({ error: `OpenRouter Error: ${errDetail}` });
+        }
+
+        const data = await response.json();
+        const choice = data?.choices?.[0];
+        return res.json({
+          content: choice?.message?.content || "No response received.",
+          model: modelToUse,
+          provider: "openrouter",
+          usage: data?.usage
+        });
+      } catch (orError: any) {
+        console.error("OpenRouter API calling error:", orError);
+        const isNetworkError = orError.message?.includes("fetch failed") || 
+                             orError.message?.includes("connect") || 
+                             orError.message?.includes("ENOTFOUND") || 
+                             orError.message?.includes("timeout");
+        if (isNetworkError) {
+          return res.status(503).json({
+            error: "OpenRouter API endpoint is unreachable from this sandbox. Try utilizing 'Offline Mode' with Gemma-2-2B-IT built-in emulator which is 100% network free and responsive on your Galaxy A34 5G!",
+            code: "NETWORK_UNREACHABLE"
+          });
+        }
+        return res.status(500).json({ error: `OpenRouter Error: ${orError.message || orError}` });
       }
-
-      const data = await response.json();
-      const choice = data?.choices?.[0];
-      return res.json({
-        content: choice?.message?.content || "No response received.",
-        model: modelToUse,
-        provider: "openrouter",
-        usage: data?.usage
-      });
     }
 
     // 3. HUGGING FACE INFERENCE API
@@ -132,11 +159,50 @@ app.post("/api/chat", async (req, res) => {
       // Model formats, e.g. "meta-llama/Llama-3-8b-instruct" or "google/gemma-2-9b-it"
       const modelToUse = model || "meta-llama/Meta-Llama-3-8B-Instruct";
       
-      // Merge system instruction with prompt or pass formatted messaging if supported
-      const hfUrl = `https://api-inference.huggingface.co/models/${modelToUse}`;
-      
-      // Hugging Face standard chat template compatibility is handled via key-value or inputs
-      // E.g. prompting text with instruction and conversation back-and-forth
+      // Modern OpenAI-Compatible endpoint for stable chat structures
+      const hfChatUrl = "https://api-inference.huggingface.co/v1/chat/completions";
+      const openAiPayload = {
+        model: modelToUse,
+        messages: [
+          { role: "system", content: systemInstruction },
+          ...messages.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }))
+        ],
+        max_tokens: 1024,
+        temperature: settings?.temperature ?? 0.7
+      };
+
+      try {
+        console.log(`[Hugging Face] Attempting chat completions via: ${hfChatUrl} for model: ${modelToUse}`);
+        const response = await fetch(hfChatUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${activeKey}`,
+          },
+          body: JSON.stringify(openAiPayload),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const assistantContent = data?.choices?.[0]?.message?.content;
+          if (assistantContent) {
+            return res.json({
+              content: assistantContent,
+              model: modelToUse,
+              provider: "huggingface",
+              usage: data?.usage
+            });
+          }
+        }
+        
+        // If chat completions is not supported for this model, or returns error, fallback to legacy text-generation
+        console.warn("[Hugging Face] Chat completion endpoint returned status " + response.status + ". Falling back to raw text-generation endpoint.");
+      } catch (chatError) {
+        console.warn("[Hugging Face] Chat completion endpoint error, attempting legacy model generation fallback:", chatError);
+      }
+
+      // FALLBACK: Legacy Text-Generation model endpoint
+      const hfLegacyUrl = `https://api-inference.huggingface.co/models/${modelToUse}`;
       let promptBuilder = `${systemInstruction}\n\n`;
       messages.forEach(msg => {
         const sender = msg.role === "user" ? "User" : "Assistant";
@@ -144,7 +210,7 @@ app.post("/api/chat", async (req, res) => {
       });
       promptBuilder += `Assistant:`;
 
-      const payload = {
+      const legacyPayload = {
         inputs: promptBuilder,
         parameters: {
           max_new_tokens: 512,
@@ -152,40 +218,53 @@ app.post("/api/chat", async (req, res) => {
         }
       };
 
-      const response = await fetch(hfUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${activeKey}`,
-        },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const response = await fetch(hfLegacyUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${activeKey}`,
+          },
+          body: JSON.stringify(legacyPayload),
+        });
 
-      if (!response.ok) {
-        const errDetail = await response.text();
-        return res.status(response.status).json({ error: `Hugging Face Error: ${errDetail}` });
-      }
-
-      const data = await response.json();
-      // HF Inference API usually returns [{"generated_text": "..."}]
-      let outputText = "";
-      if (Array.isArray(data) && data[0]?.generated_text) {
-        let text = data[0].generated_text;
-        // Strip out previous builders to only show assistant response
-        if (text.startsWith(promptBuilder)) {
-          outputText = text.replace(promptBuilder, "").trim();
-        } else {
-          outputText = text.trim();
+        if (!response.ok) {
+          const errDetail = await response.text();
+          return res.status(response.status).json({ error: `Hugging Face (v1 & legacy) failed. Server response: ${errDetail}` });
         }
-      } else {
-        outputText = JSON.stringify(data);
-      }
 
-      return res.json({
-        content: outputText || "Hugging Face returned an empty response.",
-        model: modelToUse,
-        provider: "huggingface",
-      });
+        const data = await response.json();
+        let outputText = "";
+        if (Array.isArray(data) && data[0]?.generated_text) {
+          let text = data[0].generated_text;
+          if (text.startsWith(promptBuilder)) {
+            outputText = text.replace(promptBuilder, "").trim();
+          } else {
+            outputText = text.trim();
+          }
+        } else {
+          outputText = JSON.stringify(data);
+        }
+
+        return res.json({
+          content: outputText || "Hugging Face returned an empty response.",
+          model: modelToUse,
+          provider: "huggingface",
+        });
+      } catch (hfError: any) {
+        console.error("Hugging Face legacy calling error:", hfError);
+        const isNetworkError = hfError.message?.includes("fetch failed") || 
+                             hfError.message?.includes("connect") || 
+                             hfError.message?.includes("ENOTFOUND") || 
+                             hfError.message?.includes("timeout");
+        if (isNetworkError) {
+          return res.status(503).json({
+            error: "Hugging Face Inference servers are unreachable. Please verify your internet connection, credentials, or activate the built-in offline Gemma-2-2B emulation mode.",
+            code: "NETWORK_UNREACHABLE"
+          });
+        }
+        return res.status(500).json({ error: `Hugging Face Error: ${hfError.message || hfError}` });
+      }
     }
 
     // 4. OLLAMA LOCAL SERVER PROXIER

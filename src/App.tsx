@@ -96,8 +96,8 @@ android {
 ];
 
 export default function App() {
-  const [activeProvider, setActiveProvider] = useState<Provider>("gemini");
-  const [activeModel, setActiveModel] = useState<string>("gemini-3.5-flash");
+  const [activeProvider, setActiveProvider] = useState<Provider>("ollama");
+  const [activeModel, setActiveModel] = useState<string>("gemma3:270m");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
@@ -116,7 +116,7 @@ export default function App() {
     gemini: { apiKey: "", isActive: true, customModels: [] },
     openrouter: { apiKey: "", isActive: false, customModels: [] },
     huggingface: { apiKey: "", isActive: false, customModels: [] },
-    ollama: { apiKey: "", isActive: false, customModels: [], ollamaUrl: "http://localhost:11434" },
+    ollama: { apiKey: "", isActive: false, customModels: [], ollamaUrl: "http://127.0.0.1:11434" },
     "local-gemma": { apiKey: "", isActive: false, customModels: [] }
   });
 
@@ -152,10 +152,18 @@ export default function App() {
       type: "cloud"
     },
     {
-      id: "google/gemini-2.5-flash",
-      name: "google/gemini-2.5-flash",
-      displayName: "OpenRouter Gemini 2.5",
-      description: "Proxy endpoint via OpenRouter API with high latency optimization.",
+      id: "openrouter/free",
+      name: "openrouter/free",
+      displayName: "OpenRouter Free Auto-Router",
+      description: "Automatically routes queries to current best available free model.",
+      provider: "openrouter",
+      type: "cloud"
+    },
+    {
+      id: "google/gemma-2-9b-it:free",
+      name: "google/gemma-2-9b-it:free",
+      displayName: "Gemma 2 9B (Free)",
+      description: "Highly efficient free Gemma model via OpenRouter API.",
       provider: "openrouter",
       type: "cloud"
     },
@@ -176,20 +184,20 @@ export default function App() {
       type: "cloud"
     },
     {
-      id: "gemma2:2b",
-      name: "gemma2:2b",
-      displayName: "Ollama Gemma 2 (2B)",
-      description: "Local model daemon hosted instantly on http://localhost:11434.",
+      id: "gemma3:270m",
+      name: "gemma3:270m",
+      displayName: "Ollama Gemma 3 (270M)",
+      description: "Fast local model running via Ollama daemon on http://127.0.0.1:11434.",
       provider: "ollama",
       type: "local"
     },
     {
       id: "local-gemma-2b",
-      name: "gemma-2b-it-arm64",
-      displayName: "Gemma Edge 2B IT",
-      description: "Downloadable GGUF weights compiled directly for ARM structures.",
+      name: "gemma-2-2b-it-q4-galaxy-a34",
+      displayName: "Gemma 2 2B IT (Galaxy A34 Optimized)",
+      description: "4-bit quantized weights optimized for MediaTek Dimensity 1080 & 8GB RAM. Superb for offline Kotlin/Java generation.",
       provider: "local-gemma",
-      size: "1.42 GB",
+      size: "1.45 GB",
       type: "local",
       isDownloaded: false
     }
@@ -201,12 +209,51 @@ export default function App() {
       const stored = localStorage.getItem("DROIDCODER_KEYS");
       if (stored) {
         const parsed = JSON.parse(stored);
+        if (parsed.ollama && (!parsed.ollama.ollamaUrl || parsed.ollama.ollamaUrl === "http://localhost:11434")) {
+          parsed.ollama.ollamaUrl = "http://127.0.0.1:11434";
+        }
         setProviderConfigs(parsed);
       }
       
       const storedModels = localStorage.getItem("DROIDCODER_MODELS");
       if (storedModels) {
-        setModels(JSON.parse(storedModels));
+        // Sanitize models to include gemma3 and openrouter free variants if needed
+        const loadedModels = JSON.parse(storedModels);
+        const mergedModels = [...loadedModels];
+        // Ensure gemma3:270m is in the list
+        if (!mergedModels.some(m => m.id === "gemma3:270m")) {
+          mergedModels.push({
+            id: "gemma3:270m",
+            name: "gemma3:270m",
+            displayName: "Ollama Gemma 3 (270M)",
+            description: "Fast local model running via Ollama daemon on http://127.0.0.1:11434.",
+            provider: "ollama",
+            type: "local"
+          });
+        }
+        // Ensure openrouter/free is in the list
+        if (!mergedModels.some(m => m.id === "openrouter/free")) {
+          mergedModels.push({
+            id: "openrouter/free",
+            name: "openrouter/free",
+            displayName: "OpenRouter Free Auto-Router",
+            description: "Automatically routes queries to current best available free model.",
+            provider: "openrouter",
+            type: "cloud"
+          });
+        }
+        // Ensure google/gemma-2-9b-it:free is in the list
+        if (!mergedModels.some(m => m.id === "google/gemma-2-9b-it:free")) {
+          mergedModels.push({
+            id: "google/gemma-2-9b-it:free",
+            name: "google/gemma-2-9b-it:free",
+            displayName: "Gemma 2 9B (Free)",
+            description: "Highly efficient free Gemma model via OpenRouter API.",
+            provider: "openrouter",
+            type: "cloud"
+          });
+        }
+        setModels(mergedModels);
       }
     } catch (e) {
       console.error("Failed loading keys", e);
@@ -266,7 +313,17 @@ export default function App() {
       });
 
       if (!res.ok) {
-        throw new Error(await res.text() || "Network response failed.");
+        const textErr = await res.text();
+        let extractedMessage = textErr;
+        try {
+          const parsed = JSON.parse(textErr);
+          if (parsed && typeof parsed === "object" && parsed.error) {
+            extractedMessage = parsed.error;
+          }
+        } catch (e) {
+          // Keep as raw textErr if not valid JSON
+        }
+        throw new Error(extractedMessage || "Network response failed.");
       }
 
       const data = await res.json();

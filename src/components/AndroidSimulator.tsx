@@ -523,7 +523,7 @@ export default function AndroidSimulator({
                     id="ollama-url-input"
                     value={providerConfigs.ollama.ollamaUrl || ""}
                     onChange={(e) => updateProviderConfig("ollama", { ollamaUrl: e.target.value })}
-                    placeholder="http://localhost:11434"
+                    placeholder="http://127.0.0.1:11434"
                     className="w-full bg-neutral-950 border border-neutral-800 focus:border-cyan-500 rounded-lg p-2 text-xs font-mono text-neutral-200"
                   />
                 </div>
