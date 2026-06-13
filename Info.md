@@ -70,3 +70,8 @@ Copy the code in MainActivity.kt in DroidCoder into app/src/main/java/com/yourpa
 Add the dependencies mentioned in build.gradle.kts into your local Gradle files.
 Compile App: Select Build > Build Bundle(s) / APK(s) > Build APK(s) in the top menu bar to compile a physical output file.
 
+To work around this restriction completely and continue coding uninterrupted:
+Toggle Offline Mode to "ON" or select "Gemma Edge 2B IT" inside the Models tab.
+In the Models tab, download the simulated Gemma Edge Weights and click Serve Locally.
+This initializes a fast local mock inference engine running entirely inside your server memory, completely bypassing connection timeouts to external ports!
+
